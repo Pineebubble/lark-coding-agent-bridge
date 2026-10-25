@@ -35,6 +35,7 @@ export async function createBootstrapProfileConfig(
     preferences: input.preferences,
     secrets: input.secrets,
     ...(codex ? { codex } : {}),
+    ...(input.agentKind === 'gemini' ? { gemini: { binaryPath: await resolveExecutablePath(process.env.LARK_CHANNEL_GEMINI_BIN ?? 'gemini') } } : {}),
   });
   if (workspace) {
     profile.workspaces = {

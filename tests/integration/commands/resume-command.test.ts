@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
-import { claudeCapability, codexCapability } from '../../../src/agent/capability.js';
+import { capabilityForProfile } from '../../../src/agent/capability.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import type { ChatModeCache } from '../../../src/bot/chat-mode-cache.js';
 import { PendingQueue } from '../../../src/bot/pending-queue.js';
@@ -41,6 +41,29 @@ const cleanups: Array<() => Promise<void>> = [];
 describe('agent-aware resume commands', () => {
   afterEach(async () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
+  });
+
+  it('lists and resumes Gemini sessions using scoped nonces, then clears them with /new', async () => {
+    const h = await createHarness('gemini');
+    h.catalog.upsertActive({ ...h.identity, sessionId: 'gemini-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, scopeId: 'other-chat', sessionId: 'private-other-session', now: 2000 });
+    await h.run('/resume');
+    const card = lastContent(h.channel);
+    const nonces = resumeArgsFromCard(card);
+    expect(nonces).toHaveLength(1);
+    expect(JSON.stringify(card)).not.toContain('private-other-session');
+    await h.run(`/resume use ${nonces[0]}`);
+    expect(h.catalog.activeFor(h.identity)).toMatchObject({ agentId: 'gemini', sessionId: 'gemini-current' });
+    await h.run('/new');
+    expect(h.catalog.activeFor(h.identity)).toBeUndefined();
+  });
+
+  it('does not accept arbitrary Gemini session IDs as resume candidates', async () => {
+    const h = await createHarness('gemini');
+    h.catalog.upsertActive({ ...h.identity, sessionId: 'gemini-current', now: 1000 });
+    await h.run('/resume use unrelated-session');
+    expect(h.catalog.activeFor(h.identity)?.sessionId).toBe('gemini-current');
+    expect(lastMarkdown(h.channel)).toContain('不可恢复');
   });
 
   it('archives only the current catalog entry when starting a new conversation', async () => {
@@ -382,7 +405,7 @@ async function commandIdentity(
 ): Promise<SessionCatalogIdentity> {
   const workspace = await resolveWorkingDirectory(cwd);
   if (!workspace.ok) throw new Error(workspace.userVisible);
-  const capability = agentKind === 'codex' ? codexCapability(profileConfig) : claudeCapability(profileConfig);
+  const capability = capabilityForProfile(profileConfig);
   const access = canUseDm(profileConfig, controls, 'ou-user');
   const policy = evaluateRunPolicy({
     scope: {

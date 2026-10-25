@@ -1,5 +1,7 @@
 # lark-channel-bridge
 
+> This fork adds **Gemini CLI** support. See [Gemini setup and limitations](./GEMINI.md).
+
 A lightweight bot that bridges Feishu / Lark messenger with your local Claude Code or Codex CLI. Run one command, scan a QR code to bind a PersonalAgent app, and talk to your local coding agent from chat.
 
 [中文 README](./README.zh.md)
