@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
-import { claudeCapability, codexCapability } from '../agent/capability';
+import { capabilityForProfile } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
@@ -153,7 +153,7 @@ type Handler = (args: string, ctx: CommandContext) => Promise<void>;
 
 interface ResumeCandidate {
   scopeId: string;
-  agentId: 'claude' | 'codex';
+  agentId: 'claude' | 'codex' | 'gemini';
   cwdRealpath: string;
   policyFingerprint: string;
   sessionId?: string;
@@ -557,6 +557,24 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
+  if (ctx.controls.profileConfig.agentKind === 'gemini') {
+    const identity = ctx.sessionCatalogIdentity;
+    const entries = identity && ctx.sessionCatalog
+      ? ctx.sessionCatalog.entries()
+          .filter((entry) => entry.agentId === 'gemini' && entry.scopeId === identity.scopeId && entry.cwdRealpath === identity.cwdRealpath && entry.policyFingerprint === identity.policyFingerprint && entry.sessionId)
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .slice(0, limit)
+          .map((entry) => ({
+            sessionId: issueResumeCandidate(identity, { sessionId: entry.sessionId! }),
+            preview: entry.lastSummary || 'Gemini session',
+            relTime: formatRelTime(entry.updatedAt),
+            current: entry.status === 'active',
+          }))
+      : [];
+    await ctx.channel.send(ctx.msg.chatId, { card: resumeCard(cwd, entries) }, commandReplyOptions(ctx));
+    return;
+  }
+
   if (ctx.controls.profileConfig.agentKind === 'codex') {
     const identity = ctx.sessionCatalogIdentity;
     const entry =
@@ -626,7 +644,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       } else {
         ctx.sessionCatalog.upsertActive({
           scopeId: ctx.sessionCatalogIdentity.scopeId,
-          agentId: 'claude',
+          agentId: ctx.sessionCatalogIdentity.agentId,
           cwdRealpath: ctx.sessionCatalogIdentity.cwdRealpath,
           policyFingerprint: ctx.sessionCatalogIdentity.policyFingerprint,
           sessionId: resolved.sessionId!,
@@ -636,7 +654,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       await reply(ctx, RESUME_APPLIED_REPLY);
       return;
     }
-    if (ctx.sessionCatalogIdentity.agentId === 'codex') {
+    if (ctx.sessionCatalogIdentity.agentId !== 'claude') {
       await reply(ctx, '当前上下文不可恢复这个会话，请先用 `/resume` 重新生成恢复候选。');
       return;
     }
@@ -653,8 +671,10 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     return;
   }
 
-  if (ctx.controls.profileConfig.agentKind === 'codex') {
-    await reply(ctx, '当前上下文没有可恢复的 Codex thread，请先在当前工作区完成一次运行。');
+  if (ctx.controls.profileConfig.agentKind !== 'claude') {
+    await reply(ctx, ctx.controls.profileConfig.agentKind === 'codex'
+      ? '当前上下文没有可恢复的 Codex thread，请先在当前工作区完成一次运行。'
+      : '当前上下文没有可恢复的 Gemini 会话，请先在当前工作区完成一次运行。');
     return;
   }
 
@@ -699,7 +719,7 @@ function consumeResumeCandidate(
     candidate.agentId !== identity.agentId ||
     candidate.cwdRealpath !== identity.cwdRealpath ||
     candidate.policyFingerprint !== identity.policyFingerprint ||
-    (identity.agentId === 'claude' && !candidate.sessionId) ||
+    (identity.agentId !== 'codex' && !candidate.sessionId) ||
     (identity.agentId === 'codex' && !candidate.threadId)
   ) {
     return undefined;
@@ -762,6 +782,9 @@ function selectedResumeCwd(ctx: CommandContext): string | undefined {
 function runtimeAccessStatus(
   profileConfig: ProfileConfig,
 ): { label: string; value: string } {
+  if (profileConfig.agentKind === 'gemini') {
+    return { label: 'approval', value: profileConfig.permissions.defaultAccess === 'read-only' ? 'plan' : profileConfig.permissions.defaultAccess === 'full' ? 'yolo' : 'auto_edit' };
+  }
   if (profileConfig.agentKind === 'claude') {
     return {
       label: 'permission',
@@ -814,13 +837,13 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const sess = ctx.sessions.getRaw(ctx.scope);
   const isCodex = ctx.controls.profileConfig.agentKind === 'codex';
   const catalogEntry =
-    isCodex && ctx.sessionCatalog && ctx.sessionCatalogIdentity
+    ctx.controls.profileConfig.agentKind !== 'claude' && ctx.sessionCatalog && ctx.sessionCatalogIdentity
       ? ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity)
       : undefined;
   const card = statusCard({
     profileName: ctx.controls.profile,
     cwd,
-    sessionId: isCodex ? catalogEntry?.threadId : sess?.sessionId,
+    sessionId: isCodex ? catalogEntry?.threadId : ctx.controls.profileConfig.agentKind === 'gemini' ? catalogEntry?.sessionId : sess?.sessionId,
     emptySessionText: isCodex ? '(未建立)' : undefined,
     sessionStale: !isCodex && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
@@ -1127,10 +1150,7 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   }
   doctorLastByOperator.set(rateKey, now);
 
-  const capability =
-    ctx.controls.profileConfig.agentKind === 'codex'
-      ? codexCapability(ctx.controls.profileConfig)
-      : claudeCapability(ctx.controls.profileConfig);
+  const capability = capabilityForProfile(ctx.controls.profileConfig);
   const policy = evaluateRunPolicy({
     scope: {
       source: 'im',

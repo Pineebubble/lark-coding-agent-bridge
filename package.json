@@ -30,6 +30,7 @@
     "bin",
     "README.md",
     "README.zh.md",
+    "GEMINI.md",
     "LICENSE"
   ],
   "scripts": {

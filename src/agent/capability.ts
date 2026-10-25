@@ -2,8 +2,8 @@ import type { AccessMode } from '../config/permissions';
 import type { ProfileConfig } from '../config/profile-schema';
 import { BRIDGE_SYSTEM_PROMPT } from './bridge-system-prompt';
 
-export type AgentCapabilityId = 'claude' | 'codex';
-export type AgentSessionKind = 'claude-session' | 'codex-thread';
+export type AgentCapabilityId = 'claude' | 'codex' | 'gemini';
+export type AgentSessionKind = 'claude-session' | 'codex-thread' | 'gemini-session';
 export type PromptInjectionMode = 'append-system-prompt' | 'stdin-prefix';
 
 export interface AgentCapability {
@@ -55,4 +55,25 @@ export function codexCapability(profile: Pick<ProfileConfig, 'permissions'>): Ag
       maxAccess,
     },
   };
+}
+
+
+export function geminiCapability(profile: Pick<ProfileConfig, 'permissions'>): AgentCapability {
+  return {
+    agentId: 'gemini',
+    sessionKind: 'gemini-session',
+    promptInjection: 'stdin-prefix',
+    systemPrompt: BRIDGE_SYSTEM_PROMPT,
+    supportsNativeHistory: false,
+    callback: { marker: '__bridge_cb', legacyMarkers: [] },
+    permissions: { maxAccess: profile.permissions.maxAccess },
+  };
+}
+
+export function capabilityForProfile(profile: ProfileConfig): AgentCapability {
+  switch (profile.agentKind) {
+    case 'gemini': return geminiCapability(profile);
+    case 'codex': return codexCapability(profile);
+    case 'claude': return claudeCapability(profile);
+  }
 }

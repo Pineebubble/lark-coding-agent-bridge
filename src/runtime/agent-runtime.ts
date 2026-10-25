@@ -1,3 +1,4 @@
+import { GeminiAdapter } from '../agent/gemini/adapter';
 import { ClaudeAdapter } from '../agent/claude/adapter';
 import { CodexAdapter } from '../agent/codex/adapter';
 import { AgentPreflightError, type AgentAvailability } from '../agent/preflight';
@@ -33,6 +34,9 @@ export function createRuntimeAgent(
             : {}),
         }
       : undefined;
+  if (profileConfig.agentKind === 'gemini') {
+    return new GeminiAdapter({ binary: profileConfig.gemini?.binaryPath ?? process.env.LARK_CHANNEL_GEMINI_BIN ?? 'gemini', larkChannel });
+  }
   if (profileConfig.agentKind === 'codex') {
     const codex = profileConfig.codex;
     if (!codex?.binaryPath) {
@@ -58,9 +62,9 @@ export async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promis
   if (ok) return { ok: true };
   const diagnostic = {
     code: 'agent-binary-not-found' as const,
-    agentId: agent.id === 'codex' ? ('codex' as const) : ('claude' as const),
+    agentId: agent.id === 'gemini' ? ('gemini' as const) : agent.id === 'codex' ? ('codex' as const) : ('claude' as const),
     agentName: agent.displayName,
-    command: agent.id === 'codex' ? 'codex' : 'claude',
+    command: agent.id,
   };
   return { ok: false, diagnostic, error: new AgentPreflightError(diagnostic) };
 }

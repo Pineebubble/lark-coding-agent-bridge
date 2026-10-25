@@ -605,6 +605,7 @@ async function maybeResolveProfileRuntime(
 }
 
 function agentDisplay(agentKind: ProcessEntry['agentKind']): { id: string; displayName: string } {
+  if (agentKind === 'gemini') return { id: 'gemini', displayName: 'Gemini CLI' };
   return agentKind === 'codex'
     ? { id: 'codex', displayName: 'Codex CLI' }
     : { id: 'claude', displayName: 'Claude Code' };
